@@ -1,0 +1,68 @@
+name: Publish Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-release.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify extension
+        run: |
+          node --check browser-extension/background.js
+          node --check browser-extension/content.js
+          node --check browser-extension/popup.js
+          node --test browser-extension/background.test.cjs
+      - name: Prepare extension asset and release notes
+        shell: bash
+        run: |
+          version="$(head -n 1 version.txt | tr -d '\r\n')"
+          [[ "$version" =~ ^[0-9]+(\.[0-9]+)*$ ]]
+          echo "RELEASE_TAG=v$version" >> "$GITHUB_ENV"
+          echo "RELEASE_ASSET=YunX-browser-extension-v$version.zip" >> "$GITHUB_ENV"
+          (cd browser-extension && zip -r "../YunX-browser-extension-v$version.zip" . -x '*.test.cjs')
+          cat > release-notes.md <<'NOTES'
+          ## 修复
+          - 修复浏览器扩展“嗅探页面资源”开关关闭后仍继续收集资源的问题。
+          - 关闭插件或嗅探功能后，停止收集网络及页面 DOM 资源，并清空已缓存的资源。
+          - 重新启用嗅探后恢复资源收集。
+
+          ## 验证
+          - 4 项 Node.js 回归测试通过。
+          - 后台、页面及弹窗脚本语法检查通过。
+
+          ## 下载与安装
+          - 本次附件为 Chrome / Edge 浏览器扩展包，解压后在浏览器扩展管理页开启开发者模式，选择“加载已解压的扩展程序”。
+          - GitHub 自动提供完整源码压缩包。
+          - 本次未提供 Windows 桌面端安装包或便携程序；桌面端构建尚未验证。
+          NOTES
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; leaving it unchanged."
+          else
+            gh release create "$RELEASE_TAG" "$RELEASE_ASSET" \
+              --target "$RELEASE_COMMIT" \
+              --title "YunX-Desktop $RELEASE_TAG" \
+              --notes-file release-notes.md
+          fi
