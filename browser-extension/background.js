@@ -190,6 +190,10 @@ async function setSettings(patch) {
   const cur = await getSettings();
   const next = Object.assign({}, cur, patch);
   await chrome.storage.local.set({ settings: next });
+  if (!next.enabled || !next.sniff) {
+    tabResources.clear();
+    sniffByUrl.clear();
+  }
   return next;
 }
 
@@ -421,10 +425,12 @@ async function handOverToYunx(info) {
 // ---------------------------------------------------------------- 嗅探（响应头观察）
 
 chrome.webRequest.onHeadersReceived.addListener(
-  (details) => {
+  async (details) => {
     if (details.tabId < 0) return;
     const url = details.url;
     if (!/^https?:/i.test(url)) return;
+    const settings = await getSettings();
+    if (!settings.enabled || !settings.sniff) return;
 
     let mime = '';
     let size = -1;
@@ -553,6 +559,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 
 /** 合并网络嗅探 + 页面 DOM 收集到的资源 */
 async function collectResources(tabId) {
+  const settings = await getSettings();
+  if (!settings.enabled || !settings.sniff) return [];
   const net = (tabResources.get(tabId) || []).slice();
   let dom = [];
   if (tabId >= 0) {
